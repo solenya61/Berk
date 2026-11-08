@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#101715" />
+    <title>Gökyırtan | Ejderha Uçuş Alanı</title>
+  </head>
+  <body>
+    <main id="game">
+      <div id="viewport" aria-label="3 boyutlu ejderha uçuş alanı"></div>
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark">G</span><div><strong>GÖKYIRTAN</strong><small>UÇUŞ ALANI · 03</small></div></div>
+        <div class="flight-state"><i></i><span>UÇUŞ SERBEST</span></div>
+        <button class="camera-toggle" id="camera-toggle" type="button" aria-label="Birinci şahıs kameraya geç" aria-pressed="false" title="Kamera açısını değiştir"><span aria-hidden="true">◉</span><b id="camera-label">TAKİP</b></button>
+        <div class="top-stats"><span><small>YIKIM</small><b id="score">000</b></span><span><small>İRTİFA</small><b id="altitude">000 m</b></span></div>
+      </header>
+
+      <div class="reticle" aria-hidden="true"><i></i><i></i><i></i><i></i><b></b></div>
+
+      <section class="dragon-panel" aria-label="Ejderha seçimi">
+        <div class="eyebrow">BİNİCİ BAĞI</div>
+        <h1 id="dragon-name">TOOTHLESS</h1>
+        <p id="dragon-copy">Çevik · Hızlı ve dengeli</p>
+        <div class="dragon-options" role="group" aria-label="Ejderha seç">
+          <button class="dragon-option is-active" data-dragon="toothless" aria-label="Toothless" title="Toothless · Çevik ve dengeli"><span class="dragon-dot toothless-dot"></span><span>TOOTHLESS</span></button>
+          <button class="dragon-option" data-dragon="hookfang" aria-label="Hookfang" title="Hookfang · Hızlı ve güçlü"><span class="dragon-dot hookfang-dot"></span><span>HOOKFANG</span></button>
+          <button class="dragon-option" data-dragon="nadder" aria-label="Nadder" title="Nadder · Hassas dönüş"><span class="dragon-dot nadder-dot"></span><span>NADDER</span></button>
+          <button class="dragon-option" data-dragon="cloudjumper" aria-label="Cloudjumper" title="Cloudjumper · Dengeli uçuş"><span class="dragon-dot cloudjumper-dot"></span><span>CLOUDJUMPER</span></button>
+          <button class="dragon-option" data-dragon="screamingDeath" aria-label="Screaming Death" title="Screaming Death · Ağır darbe"><span class="dragon-dot screaming-dot"></span><span>SCREAMING DEATH</span></button>
+          <button class="dragon-option" data-dragon="bewilderbeast" aria-label="Bewilderbeast" title="Bewilderbeast · Yıkıcı güç"><span class="dragon-dot bewilder-dot"></span><span>BEWILDERBEAST</span></button>
+        </div>
+        <div class="stat-list">
+          <div><span>HIZ</span><i><b id="stat-speed" style="--value:82%"></b></i></div>
+          <div><span>ÇEVİKLİK</span><i><b id="stat-turn" style="--value:88%"></b></i></div>
+          <div><span>GÜÇ</span><i><b id="stat-power" style="--value:62%"></b></i></div>
+        </div>
+      </section>
+
+      <aside class="speed-panel">
+        <div class="speed-label">HAVA HIZI</div>
+        <div class="speed-value"><b id="speed">000</b><span>KM/SA</span></div>
+        <div class="speed-track"><i id="speed-bar"></i></div>
+        <div class="speed-mode"><span class="mode-dot"></span><span id="mode-label">SÜZÜLÜŞ</span></div>
+      </aside>
+
+      <footer class="controls">
+        <div class="control-hint"><span class="drag-icon"><i></i></span><span><b>SÜRÜKLE</b><small>YÖN VER · YÜKSEL · DAL</small></span></div>
+        <div class="control-actions">
+          <button class="action-button breath-button" id="breath" title="Ateş nefesi"><span class="action-icon">✳</span><span>ATEŞ NEFESİ</span><kbd>F</kbd></button>
+          <button class="action-button boost-button" id="boost" title="Kanat çırp ve hızlan"><span class="action-icon">↗</span><span>KANAT ÇIRP</span><kbd>SHIFT</kbd></button>
+        </div>
+        <div class="keyboard-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>YÖN</span></div>
+      </footer>
+      <div id="toast" class="toast" role="status"></div>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
