@@ -143,6 +143,162 @@ function makeTower(x, z, rows = 6) {
   makeBlock(x, rows * 1.08 + 0.4, z, 2.35, 0.8, 2.35);
 }
 
+const treeTrunkMaterial = new THREE.MeshStandardMaterial({ color: 0x60402b, roughness: 0.98 });
+const treeLeafMaterials = [0x496748, 0x58754b, 0x3e5b43].map(color => new THREE.MeshStandardMaterial({ color, roughness: 0.96 }));
+const treeTrunkGeometry = new THREE.CylinderGeometry(0.24, 0.42, 1, 7);
+const treeCanopyGeometry = new THREE.ConeGeometry(1, 1, 7);
+const flightFeel = Object.freeze({
+  maxBank: 0.48,
+  bankFollow: 6.5,
+  chaseFollow: 3.8,
+  speedFollow: 0.055,
+  firstPersonFollow: 10,
+  firstPersonForward: 3.55,
+  firstPersonHeight: 0.82,
+  impactShakeBase: 0.12,
+  impactShakePerSpeed: 0.014,
+  maxImpactShake: 0.72,
+  impactShakeDecay: 5.2,
+  treeDebrisCount: 16,
+  stoneDebrisCount: 10,
+  debrisLifetime: 0.72,
+  debrisGravity: 9.2,
+  debrisSize: 0.34
+});
+const debrisPalettes = {
+  tree: [0x94b961, 0x668d4b, 0x755137],
+  stone: [0xc5c4a8, 0x98988a, 0xd8c99f]
+};
+let bank = 0;
+let impactShake = 0;
+const impactBursts = [];
+const trees = [];
+const treeByCollider = new Map();
+
+function makeTree(x, z, height = 7 + Math.random() * 5) {
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+
+  const trunk = new THREE.Mesh(treeTrunkGeometry, treeTrunkMaterial);
+  trunk.scale.y = height;
+  trunk.position.y = height * 0.5;
+  trunk.castShadow = true;
+  trunk.receiveShadow = true;
+  group.add(trunk);
+
+  const leafMaterial = treeLeafMaterials[Math.floor(Math.random() * treeLeafMaterials.length)];
+  const canopyLayers = [
+    { y: height * 0.48, radius: 2.35, height: 3.5 },
+    { y: height * 0.67, radius: 1.85, height: 3.5 },
+    { y: height * 0.84, radius: 1.3, height: 3.1 }
+  ];
+  for (const layer of canopyLayers) {
+    const canopy = new THREE.Mesh(treeCanopyGeometry, leafMaterial);
+    canopy.position.y = layer.y;
+    canopy.scale.set(layer.radius, layer.height, layer.radius);
+    canopy.rotation.y = Math.random() * Math.PI;
+    canopy.castShadow = true;
+    canopy.receiveShadow = true;
+    group.add(canopy);
+  }
+  scene.add(group);
+
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, 0, z));
+  const collider = world.createCollider(
+    RAPIER.ColliderDesc.cuboid(0.48, height * 0.52, 0.48)
+      .setTranslation(0, height * 0.52, 0)
+      .setFriction(0.9)
+      .setRestitution(0.02)
+      .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+    body
+  );
+  const tree = { group, body, collider, x, z, height, toppled: false };
+  trees.push(tree);
+  treeByCollider.set(collider.handle, tree);
+}
+
+function makeForest() {
+  for (let row = 0; row < 14; row++) {
+    const baseZ = -24 - row * 23;
+    for (const side of [-1, 1]) {
+      for (let offset = 0; offset < 2; offset++) {
+        const x = side * (14 + offset * 8 + Math.random() * 3);
+        const z = baseZ + (Math.random() - 0.5) * 15;
+        makeTree(x, z, 7 + Math.random() * 5.5);
+      }
+    }
+  }
+}
+
+function toppleTree(tree, velocity, source = 'dragon') {
+  if (tree.toppled) return;
+  tree.toppled = true;
+  tree.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+  tree.body.setLinearDamping(0.12);
+  tree.body.setAngularDamping(0.18);
+
+  const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
+  const directionX = horizontalSpeed > 0.01 ? velocity.x / horizontalSpeed : 1;
+  const directionZ = horizontalSpeed > 0.01 ? velocity.z / horizontalSpeed : 0;
+  const impulse = 7 + Math.min(horizontalSpeed, 24) * 1.15;
+  tree.body.applyImpulseAtPoint(
+    { x: directionX * impulse, y: 0, z: directionZ * impulse },
+    { x: tree.x, y: tree.height * 0.88, z: tree.z },
+    true
+  );
+
+  destroyed++;
+  document.querySelector('#score').textContent = String(destroyed).padStart(3, '0');
+  const message = source === 'fireball' ? 'ATEŞ İSABETİ' : 'AĞAÇ DEVRİLDİ';
+  triggerImpactFeedback(new THREE.Vector3(tree.x, tree.height * 0.58, tree.z), Math.hypot(velocity.x, velocity.y, velocity.z), 'tree', message);
+}
+
+function triggerImpactFeedback(position, speed, kind, message) {
+  impactShake = Math.max(
+    impactShake,
+    Math.min(flightFeel.maxImpactShake, flightFeel.impactShakeBase + speed * flightFeel.impactShakePerSpeed)
+  );
+
+  const palette = debrisPalettes[kind] || debrisPalettes.stone;
+  const count = kind === 'tree' ? flightFeel.treeDebrisCount : flightFeel.stoneDebrisCount;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const velocities = [];
+  const spread = 1.4 + Math.min(speed * 0.07, 2.4);
+
+  for (let index = 0; index < count; index++) {
+    const offset = index * 3;
+    positions[offset] = position.x + (Math.random() - 0.5) * 0.9;
+    positions[offset + 1] = position.y + (Math.random() - 0.5) * 0.7;
+    positions[offset + 2] = position.z + (Math.random() - 0.5) * 0.9;
+    new THREE.Color(palette[index % palette.length]).toArray(colors, offset);
+    velocities.push({
+      x: (Math.random() - 0.5) * spread * 2,
+      y: 1.2 + Math.random() * spread,
+      z: (Math.random() - 0.5) * spread * 2
+    });
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const material = new THREE.PointsMaterial({
+    size: flightFeel.debrisSize,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+    sizeAttenuation: true
+  });
+  const points = new THREE.Points(geometry, material);
+  points.frustumCulled = false;
+  scene.add(points);
+  impactBursts.push({ points, velocities, age: 0, duration: flightFeel.debrisLifetime });
+
+  const speedLabel = `${Math.round(speed * 3.6)} KM/SA`;
+  showToast(message || (kind === 'tree' ? `AĞAÇ DEVRİLDİ · ${speedLabel}` : `ÇARPIŞMA · ${speedLabel}`));
+}
+
 function makeTarget() {
   makeWall(0, -35, 11, 4, 1.9);
   makeTower(-17, -29, 6);
@@ -252,7 +408,7 @@ async function createDragonModel(dragon) {
       scene.remove(root);
       return;
     }
-    root.visible = true;
+    root.visible = !firstPerson;
     dragonVisual = root;
     dragonMixer = nextDragonMixer;
     riderMixer = nextRiderMixer;
@@ -334,6 +490,7 @@ function breathe() {
 
 function buildScenery() {
   makeTarget();
+  makeForest();
   const markerMaterial = new THREE.MeshStandardMaterial({ color: 0xd5f36a, emissive: 0x52621c, emissiveIntensity: 0.45, roughness: 0.58 });
   for (const side of [-1, 1]) {
     const marker = new THREE.Mesh(new THREE.BoxGeometry(0.22, 8, 0.22), markerMaterial);
@@ -394,6 +551,7 @@ function bindControls() {
   const cameraToggle = document.querySelector('#camera-toggle');
   cameraToggle.addEventListener('click', () => {
     firstPerson = !firstPerson;
+    if (dragonVisual) dragonVisual.visible = !firstPerson;
     cameraToggle.setAttribute('aria-pressed', String(firstPerson));
     cameraToggle.setAttribute('aria-label', firstPerson ? 'Takip kamerasına geç' : 'Birinci şahıs kameraya geç');
     document.querySelector('#camera-label').textContent = firstPerson ? '1. ŞAHIS' : 'TAKİP';
@@ -410,7 +568,10 @@ function updateFlight(delta) {
   yaw += (targetYaw - yaw) * turnBlend;
   pitch += (targetPitch - pitch) * turnBlend;
 
-  const orientation = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, -keyboardYaw * 0.13, 'YXZ'));
+  const steering = THREE.MathUtils.clamp((targetYaw - yaw) * 3.6 + keyboardYaw * 0.65, -1, 1);
+  const targetBank = -steering * flightFeel.maxBank;
+  bank += (targetBank - bank) * (1 - Math.exp(-flightFeel.bankFollow * delta));
+  const orientation = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, yaw, bank, 'YXZ'));
   dragonBody.setRotation({ x: orientation.x, y: orientation.y, z: orientation.z, w: orientation.w }, true);
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(orientation);
   const position = dragonBody.translation();
@@ -433,12 +594,16 @@ function updateFlight(delta) {
 
   const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(orientation);
   const cameraPosition = firstPerson
-    ? dragonVisual.position.clone().addScaledVector(cameraForward, currentSpecies.cameraOffset || 3.55).add(new THREE.Vector3(0, 0.82, 0))
+    ? dragonVisual.position.clone().addScaledVector(cameraForward, flightFeel.firstPersonForward).add(new THREE.Vector3(0, flightFeel.firstPersonHeight, 0))
     : dragonVisual.position.clone().addScaledVector(cameraForward, -10.5).add(new THREE.Vector3(0, 3.1, 0));
   const shake = boostHeld ? 0.045 : Math.max(0, speed - 16) * 0.0007;
-  cameraPosition.x += Math.sin(worldTime * 27) * shake;
-  cameraPosition.y += Math.sin(worldTime * 19) * shake * 0.65;
-  camera.position.lerp(cameraPosition, 1 - Math.exp(-(firstPerson ? 10 : 3.4) * delta));
+  impactShake *= Math.exp(-flightFeel.impactShakeDecay * delta);
+  cameraPosition.x += Math.sin(worldTime * 27) * shake + Math.sin(worldTime * 64) * impactShake;
+  cameraPosition.y += Math.sin(worldTime * 19) * shake * 0.65 + Math.cos(worldTime * 47) * impactShake * 0.7;
+  const follow = firstPerson
+    ? flightFeel.firstPersonFollow
+    : flightFeel.chaseFollow + Math.min(speed, 40) * flightFeel.speedFollow;
+  camera.position.lerp(cameraPosition, 1 - Math.exp(-follow * delta));
   const lookAt = dragonVisual.position.clone().addScaledVector(cameraForward, firstPerson ? 24 : 7);
   camera.lookAt(lookAt);
 
@@ -446,7 +611,7 @@ function updateFlight(delta) {
   const targetFov = (firstPerson ? 78 : 63) + Math.min(kmh / 10, 10) + (boostHeld ? 4 : 0);
   camera.fov += (targetFov - camera.fov) * Math.min(1, delta * 2.5);
   camera.updateProjectionMatrix();
-  if (firstPerson) camera.rotateZ(-THREE.MathUtils.clamp((targetYaw - yaw) * 0.34, -0.28, 0.28));
+  camera.rotateZ(bank * (firstPerson ? 0.46 : 0.16));
   speedLines.visible = kmh > 24 || boostHeld;
   speedLineMaterial.opacity = THREE.MathUtils.clamp((kmh - 20) / 70, 0, 0.48) + (boostHeld ? 0.15 : 0);
   for (let index = 0; index < speedLineCount; index++) {
@@ -481,7 +646,17 @@ function updateObjects(delta) {
     for (const block of blocks) {
       if (!block.destroyed && fireball.mesh.position.distanceTo(block.mesh.position) < 2.1) { impact = true; break; }
     }
-    if (impact || fireball.age > 1.8) {
+    let treeImpact;
+    if (!impact) {
+      treeImpact = trees.find(tree => !tree.toppled && Math.hypot(
+        fireball.mesh.position.x - tree.x,
+        fireball.mesh.position.y - tree.height * 0.58,
+        fireball.mesh.position.z - tree.z
+      ) < 2.7);
+    }
+    if (impact || treeImpact || fireball.age > 1.8) {
+      if (treeImpact) toppleTree(treeImpact, fireball.velocity, 'fireball');
+      else if (impact) triggerImpactFeedback(fireball.mesh.position, fireball.velocity.length(), 'stone', 'ATEŞ İSABETİ');
       explodeAt(fireball.mesh.position, 6.4, 14 * currentSpecies.power);
       scene.remove(fireball.mesh);
       fireball.mesh.geometry.dispose();
@@ -502,6 +677,31 @@ function updateObjects(delta) {
       effects.splice(index, 1);
     }
   }
+  for (let index = impactBursts.length - 1; index >= 0; index--) {
+    const burst = impactBursts[index];
+    burst.age += delta;
+    const progress = burst.age / burst.duration;
+    const positionAttribute = burst.points.geometry.attributes.position;
+    const positions = positionAttribute.array;
+    for (let particle = 0; particle < burst.velocities.length; particle++) {
+      const offset = particle * 3;
+      const velocity = burst.velocities[particle];
+      velocity.y -= flightFeel.debrisGravity * delta;
+      velocity.x *= Math.exp(-1.1 * delta);
+      velocity.z *= Math.exp(-1.1 * delta);
+      positions[offset] += velocity.x * delta;
+      positions[offset + 1] += velocity.y * delta;
+      positions[offset + 2] += velocity.z * delta;
+    }
+    positionAttribute.needsUpdate = true;
+    burst.points.material.opacity = 0.95 * (1 - progress);
+    if (progress >= 1) {
+      scene.remove(burst.points);
+      burst.points.geometry.dispose();
+      burst.points.material.dispose();
+      impactBursts.splice(index, 1);
+    }
+  }
   for (const block of blocks) {
     if (!block.destroyed) continue;
     const position = block.body.translation();
@@ -509,21 +709,36 @@ function updateObjects(delta) {
     block.mesh.position.set(position.x, position.y, position.z);
     block.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
   }
+  for (const tree of trees) {
+    if (!tree.toppled) continue;
+    const position = tree.body.translation();
+    const rotation = tree.body.rotation();
+    tree.group.position.set(position.x, position.y, position.z);
+    tree.group.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+  }
 }
 
 function handleCollisions() {
   eventQueue.drainCollisionEvents((handleA, handleB, started) => {
     if (!started || hitCooldown > 0) return;
+    if (handleA !== dragonCollider.handle && handleB !== dragonCollider.handle) return;
+    const tree = treeByCollider.get(handleA) || treeByCollider.get(handleB);
+    if (tree?.toppled) return;
     const first = blockByCollider.get(handleA);
     const second = blockByCollider.get(handleB);
     const block = first || second;
-    if (!block || block.destroyed) return;
+    if (!tree && (!block || block.destroyed)) return;
     const velocity = dragonBody.linvel();
     const speed = Math.hypot(velocity.x, velocity.y, velocity.z);
     if (speed < 10) return;
     hitCooldown = 0.35;
+    if (tree) {
+      toppleTree(tree, velocity);
+      return;
+    }
     const position = block.mesh.position.clone();
     explodeAt(position, Math.min(6.5, 3.2 + speed * 0.06), currentSpecies.power * (3 + speed * 0.14), 'impact');
+    triggerImpactFeedback(position, speed, 'stone');
   });
 }
 
@@ -575,7 +790,7 @@ async function start() {
   window.addEventListener('resize', resize);
   requestAnimationFrame(animate);
   await modelLoading;
-  showToast('Sürükle ve uç. Yapıları parçalamak serbest.');
+  showToast('Sürükle ve uç. Ağaçları çarparak devir.');
 }
 
 start().catch(error => {
